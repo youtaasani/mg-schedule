@@ -547,22 +547,25 @@ export default function DashboardPage() {
                 <div
                   key={dateStr}
                   onClick={() => dayEvents.length > 0 && scrollToEvent(dateStr)}
-                  className={`relative h-14 p-1 border rounded flex flex-col justify-between items-center transition ${
+                  className={`relative h-14 p-1 border rounded flex flex-col justify-between transition ${
                     dayEvents.length > 0
                       ? 'bg-blue-50/80 border-blue-300 font-bold cursor-pointer hover:bg-blue-100 shadow-sm'
                       : 'bg-white'
                   }`}
                 >
-                  <span className="text-xs">{date.getDate()}</span>
+                  {/* 上段：日付数字と未入力アイコンを横並び（重なり防止） */}
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-xs">{date.getDate()}</span>
+                    {hasUnanswered && (
+                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white shadow shrink-0">
+                        !
+                      </span>
+                    )}
+                  </div>
 
-                  {hasUnanswered && (
-                    <span className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white shadow">
-                      !
-                    </span>
-                  )}
-
+                  {/* 下段：ステータスドット */}
                   {dayEvents.length > 0 && (
-                    <div className="flex space-x-1 mb-1">
+                    <div className="flex justify-center space-x-1 mb-1 w-full">
                       {dayEvents.map((e) => (
                         <span
                           key={e.id}
@@ -601,15 +604,21 @@ export default function DashboardPage() {
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between">
                     <div>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-sm font-semibold text-blue-600">
-                          {evt.event_date} ({formatTime(evt.start_time)} 〜 {formatTime(evt.end_time)})
-                        </span>
-                        {(evt.my_status === '3' || !evt.my_status) && (
-                          <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-bold text-red-600">
-                            未入力 !
+                      {/* 日時表示領域：日付（曜日）と時間を2行で表示 */}
+                      <div className="mb-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-sm font-semibold text-blue-600">
+                            {evt.event_date}（{['日', '月', '火', '水', '木', '金', '土'][new Date(evt.event_date.replace(/-/g, '/')).getDay()]}）
                           </span>
-                        )}
+                          {(evt.my_status === '3' || !evt.my_status) && (
+                            <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-bold text-red-600">
+                              未入力 !
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm font-semibold text-blue-600">
+                          {formatTime(evt.start_time)} 〜 {formatTime(evt.end_time)}
+                        </div>
                       </div>
                       <div className="text-lg font-bold flex items-center space-x-2">
                         <span>{evt.title}</span>
@@ -744,8 +753,8 @@ export default function DashboardPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="w-full">
                   <label className="block text-xs font-bold text-gray-700 mb-1">開始時間</label>
                   <input
                     type="time"
@@ -755,7 +764,7 @@ export default function DashboardPage() {
                     className="w-full rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
                   />
                 </div>
-                <div>
+                <div className="w-full">
                   <label className="block text-xs font-bold text-gray-700 mb-1">終了時間</label>
                   <input
                     type="time"
