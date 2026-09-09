@@ -409,52 +409,31 @@ export default function DashboardPage() {
   const currentMonthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
   const currentMonthEvents = events.filter((e) => e.event_date.startsWith(currentMonthStr));
 
-  const handleExportIcs = () => {
-    if (currentMonthEvents.length === 0) {
-      alert(`${year}年${month + 1}月の予定はありません。`);
-      return;
-    }
+  // --- Google カレンダー追加用処理 (Web Intent) ---
+  const handleAddToGoogleCalendar = (evt: EventItem) => {
+    const startTimeStr = formatTime(evt.start_time) || '19:00';
+    const endTimeStr = formatTime(evt.end_time) || '21:00';
 
-    const formatIcsDateTime = (dateStr: string, timeStr: string) => {
-      const cleanDate = dateStr.replace(/-/g, '');
-      const cleanTime = (timeStr || '00:00:00').replace(/:/g, '').slice(0, 6);
-      return `${cleanDate}T${cleanTime.padEnd(6, '0')}`;
+    const startIsoString = `${evt.event_date}T${startTimeStr}:00+09:00`;
+    const endIsoString = `${evt.event_date}T${endTimeStr}:00+09:00`;
+
+    const startDate = new Date(startIsoString);
+    const endDate = new Date(endIsoString);
+
+    const formatToGCalUTC = (date: Date) => {
+      return date.toISOString().replace(/-|:|\.\d\d\d/g, '');
     };
 
-    let csContent = [
-      'BEGIN:VCALENDAR',
-      'VERSION:2.0',
-      'PRODID:-//Futsal Attendance App//JA',
-      'CALSCALE:GREGORIAN',
-      'METHOD:PUBLISH'
-    ];
+    const startFormatted = formatToGCalUTC(startDate);
+    const endFormatted = formatToGCalUTC(endDate);
 
-    currentMonthEvents.forEach((evt) => {
-      const dtStart = formatIcsDateTime(evt.event_date, evt.start_time);
-      const dtEnd = formatIcsDateTime(evt.event_date, evt.end_time || evt.start_time);
+    const title = encodeURIComponent(evt.title);
+    const details = encodeURIComponent('フットサル出欠管理システムより登録');
+    const location = encodeURIComponent(evt.location || '');
 
-      csContent.push(
-        'BEGIN:VEVENT',
-        `UID:${evt.id}@futsal-app`,
-        `SUMMARY:${evt.title}`,
-        `LOCATION:${evt.location || ''}`,
-        `DTSTART:${dtStart}`,
-        `DTEND:${dtEnd}`,
-        `DESCRIPTION:フットサル出欠管理システムより登録`,
-        'END:VEVENT'
-      );
-    });
+    const googleCalendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startFormatted}/${endFormatted}&details=${details}&location=${location}`;
 
-    csContent.push('END:VCALENDAR');
-
-    const blob = new Blob([csContent.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `futsal_schedule_${year}_${month + 1}.ics`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    window.open(googleCalendarUrl, '_blank', 'noopener,noreferrer');
   };
 
   if (isLoading) {
@@ -467,25 +446,32 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-800">
+      {/* 修正後のヘッダー */}
       <header className="bg-white shadow">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <h1 className="text-xl font-bold text-gray-800">フットサル出欠管理</h1>
-          <div className="flex items-center space-x-3">
-            <span className="text-sm text-gray-600">
-              {currentUser?.name} さん（{getRoleLabel(currentUser?.role)}）
+        <div className="mx-auto max-w-5xl px-4 py-3">
+          {/* 上段：タイトルとユーザー情報 */}
+          <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-2">
+            <h1 className="text-base sm:text-xl font-bold text-gray-800 whitespace-nowrap">
+              フットサル出欠管理
+            </h1>
+            <span className="text-xs sm:text-sm text-gray-600 truncate max-w-[160px] sm:max-w-none text-right">
+              {currentUser?.name} <span className="text-gray-400">({getRoleLabel(currentUser?.role)})</span>
             </span>
+          </div>
 
+          {/* 下段：操作ボタン群 */}
+          <div className="mt-2 flex items-center justify-end space-x-2 overflow-x-auto py-1 whitespace-nowrap text-xs sm:text-sm">
             {currentUser?.role === '0' && (
               <>
                 <button
                   onClick={handleOpenCreateModal}
-                  className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-700 transition shadow"
+                  className="rounded bg-green-600 px-2.5 py-1.5 font-medium text-white hover:bg-green-700 transition shadow-sm whitespace-nowrap"
                 >
-                  ＋ イベント作成
+                  ＋ 作成
                 </button>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-700 transition shadow"
+                  className="rounded bg-indigo-600 px-2.5 py-1.5 font-medium text-white hover:bg-indigo-700 transition shadow-sm whitespace-nowrap"
                 >
                   一括取り込み
                 </button>
@@ -501,18 +487,18 @@ export default function DashboardPage() {
 
             <button
               onClick={() => currentUser && fetchEventsAndAttendances(currentUser.id)}
-              className="rounded bg-blue-50 border border-blue-200 px-3 py-1 text-sm text-blue-600 hover:bg-blue-100 transition flex items-center space-x-1"
+              className="rounded bg-blue-50 border border-blue-200 px-2.5 py-1.5 text-blue-600 hover:bg-blue-100 transition flex items-center space-x-1 whitespace-nowrap"
               title="最新のスケジュールに更新"
             >
               <span>🔄</span>
-              <span className="hidden sm:inline">更新</span>
+              <span>更新</span>
             </button>
             <button
               onClick={() => {
                 localStorage.removeItem('user');
                 router.push('/login');
               }}
-              className="rounded bg-gray-200 px-3 py-1 text-sm text-gray-700 hover:bg-gray-300 transition"
+              className="rounded bg-gray-200 px-2.5 py-1.5 text-gray-700 hover:bg-gray-300 transition whitespace-nowrap"
             >
               ログアウト
             </button>
@@ -528,13 +514,6 @@ export default function DashboardPage() {
               {year}年 {month + 1}月
             </h2>
             <div className="flex items-center space-x-2">
-              <button
-                onClick={handleExportIcs}
-                className="px-3 py-1 bg-green-600 text-white rounded text-xs sm:text-sm font-medium hover:bg-green-700 shadow transition flex items-center space-x-1"
-              >
-                <span>📅</span>
-                <span>カレンダー一括登録 (.ics)</span>
-              </button>
               <button onClick={prevMonth} className="px-3 py-1 border rounded text-sm hover:bg-gray-100">
                 前月
               </button>
@@ -654,6 +633,18 @@ export default function DashboardPage() {
                       </div>
                       <div className="text-sm text-gray-500">場所: {evt.location || '未定'}</div>
 
+                      {/* Googleカレンダー追加ボタン */}
+                      <div className="mt-2">
+                        <button
+                          type="button"
+                          onClick={() => handleAddToGoogleCalendar(evt)}
+                          className="inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition shadow-sm"
+                        >
+                          <span>📅</span>
+                          <span>Googleカレンダーに追加</span>
+                        </button>
+                      </div>
+
                       <div className="mt-2 flex items-center space-x-3 text-xs">
                         <span className="text-green-600 font-bold">参加: {evt.counts.attending}名</span>
                         <span className="text-red-600 font-bold">不参加: {evt.counts.absent}名</span>
@@ -700,9 +691,11 @@ export default function DashboardPage() {
                     {openDetailId === evt.id && (
                       <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 bg-gray-50 p-3 rounded">
                         {evt.attendances.map((att) => (
-                          <div key={att.user_id} className="flex items-center justify-between text-sm bg-white p-2 rounded shadow-sm">
-                            <span className="font-medium">{att.user_name}</span>
-                            <span className={`rounded px-2 py-0.5 text-xs font-bold ${
+                          <div key={att.user_id} className="flex items-center justify-between text-xs sm:text-sm bg-white p-2 rounded shadow-sm min-w-0">
+                            <span className="font-medium truncate mr-1" title={att.user_name}>
+                              {att.user_name}
+                            </span>
+                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] sm:text-xs font-bold whitespace-nowrap ${
                               att.status === '1' ? 'bg-green-100 text-green-700' :
                               att.status === '2' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
                             }`}>
