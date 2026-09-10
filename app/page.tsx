@@ -2,8 +2,20 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
+import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
+
+declare const process: {
+  env: {
+    NEXT_PUBLIC_SUPABASE_URL?: string;
+    NEXT_PUBLIC_SUPABASE_ANON_KEY?: string;
+  };
+};
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+);
 
 interface User {
   id: string;
@@ -32,6 +44,29 @@ interface EventItem {
     pending: number;
   };
 }
+
+// 日付を比較して「今日以降」と「過去」に並び替える関数
+const sortEventsByDate = (eventsList: EventItem[]) => {
+  // 日本時間の今日（YYYY-MM-DD）を確実に取得
+  const todayStr = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .format(new Date())
+    .replace(/\//g, '-'); // YYYY/MM/DD -> YYYY-MM-DD
+
+  const upcomingEvents = eventsList
+    .filter((e) => e.event_date.slice(0, 10) >= todayStr)
+    .sort((a, b) => a.event_date.localeCompare(b.event_date));
+
+  const pastEvents = eventsList
+    .filter((e) => e.event_date.slice(0, 10) < todayStr)
+    .sort((a, b) => a.event_date.localeCompare(b.event_date));
+
+  return [...upcomingEvents, ...pastEvents];
+};
 
 export default function DashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -84,9 +119,9 @@ export default function DashboardPage() {
         .from('attendances')
         .select('*');
 
-      const mergedEvents: EventItem[] = (eventData || []).map((evt) => {
+      const mergedEvents: EventItem[] = (eventData || []).map((evt: any) => {
         const evtAttendances = (attendanceData || []).filter(
-          (att) => att.event_id === evt.id
+          (att: any) => att.event_id === evt.id
         );
 
         let myStatus = '3';
@@ -94,8 +129,9 @@ export default function DashboardPage() {
         let absentCount = 0;
         let pendingCount = 0;
 
-        const details: AttendanceDetail[] = (usersData || []).map((u) => {
-          const att = evtAttendances.find((a) => a.user_id === u.id);
+        const details: AttendanceDetail[] = (usersData || []).map(
+          (u: { id: string; name: string }) => {
+          const att = evtAttendances.find((a: any) => a.user_id === u.id);
           const status = att ? att.status : '3';
 
           if (u.id === currentUserId) myStatus = status;
@@ -105,7 +141,8 @@ export default function DashboardPage() {
           else pendingCount++;
 
           return { user_id: u.id, user_name: u.name, status };
-        });
+          }
+        );
 
         return {
           id: evt.id,
@@ -120,7 +157,9 @@ export default function DashboardPage() {
         };
       });
 
-      setEvents(mergedEvents);
+      // データのソートとセット
+      setEvents(sortEventsByDate(mergedEvents));
+
     } catch (err: any) {
       console.error('データ取得エラー:', err.message || err);
     } finally {
@@ -128,54 +167,67 @@ export default function DashboardPage() {
     }
   };
 
-  const handleAttendanceChange = async (eventId: string, newStatus: string) => {
+  // 出欠回答処理の修正
+// 出欠回答処理の修正
+// 出欠回答処理の修正
+  const handleAttendanceChange = async (eventId: string, status: string) => {
     if (!currentUser) return;
 
-    setEvents((prevEvents) =>
-      prevEvents.map((evt) => {
-        if (evt.id !== eventId) return evt;
-
-        const updatedAttendances = evt.attendances.map((att) =>
-          att.user_id === currentUser.id ? { ...att, status: newStatus } : att
-        );
-
-        return {
-          ...evt,
-          my_status: newStatus,
-          attendances: updatedAttendances,
-        };
-      })
+    // 1. Supabaseのデータ更新（user_name を除外し、onConflict を指定）
+    const { error } = await supabase.from('attendances').upsert(
+      {
+        event_id: eventId,
+        user_id: currentUser.id,
+        status: status,
+      },
+      { onConflict: 'event_id, user_id' }
     );
 
-    try {
-      const { data: existing } = await supabase
-        .from('attendances')
-        .select('id')
-        .eq('event_id', eventId)
-        .eq('user_id', currentUser.id)
-        .maybeSingle();
-
-      if (existing) {
-        await supabase
-          .from('attendances')
-          .update({ status: newStatus, updated_at: new Date().toISOString() })
-          .eq('id', existing.id);
-      } else {
-        await supabase
-          .from('attendances')
-          .insert({
-            id: crypto.randomUUID(),
-            event_id: eventId,
-            user_id: currentUser.id,
-            status: newStatus,
-          });
-      }
-
-      await fetchEventsAndAttendances(currentUser.id);
-    } catch (err: any) {
-      console.error('例外エラー:', err.message || err);
-      fetchEventsAndAttendances(currentUser.id);
+    if (error) {
+      console.error('更新エラー:', error.message);
+      alert('更新に失敗しました: ' + error.message);
+      return;
     }
+
+    // 2. 画面のステートを更新（並び順を維持）
+    setEvents((prevEvents) => {
+      const updatedEvents = prevEvents.map((evt) => {
+        if (evt.id === eventId) {
+          const otherAttendances = (evt.attendances || []).filter(
+            (a) => a.user_id !== currentUser.id
+          );
+          const updatedAttendances = [
+            ...otherAttendances,
+            {
+              user_id: currentUser.id,
+              user_name: currentUser.name,
+              status: status,
+            },
+          ];
+
+          let attending = 0;
+          let absent = 0;
+          let pending = 0;
+
+          updatedAttendances.forEach((a) => {
+            if (a.status === '1') attending++;
+            else if (a.status === '2') absent++;
+            else pending++;
+          });
+
+          return {
+            ...evt,
+            my_status: status,
+            attendances: updatedAttendances,
+            counts: { attending, absent, pending },
+          };
+        }
+        return evt;
+      });
+
+      // 更新後もソート順を維持する
+      return sortEventsByDate(updatedEvents);
+    });
   };
 
   // 時間フォーマット正規化関数 (ExcelのUTC読み込みによるズレを補正)
@@ -595,13 +647,30 @@ export default function DashboardPage() {
               予定されているイベントはありません。
             </div>
           ) : (
-            <div className="space-y-4">
-              {events.map((evt) => (
-                <div
-                  key={evt.id}
-                  id={`event-${evt.event_date}`}
-                  className="rounded-lg border border-gray-200 p-4 transition hover:border-blue-300"
-                >
+<div className="space-y-4">
+              {events.map((evt) => {
+                // 日本時間の今日（YYYY-MM-DD）を取得して過去イベントか判定
+                const todayStr = new Intl.DateTimeFormat('ja-JP', {
+                  timeZone: 'Asia/Tokyo',
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                })
+                  .format(new Date())
+                  .replace(/\//g, '-');
+
+                const isPast = evt.event_date.slice(0, 10) < todayStr;
+
+                return (
+                  <div
+                    key={evt.id}
+                    id={`event-${evt.event_date}`}
+                    className={`rounded-lg border p-4 transition ${
+                      isPast
+                        ? 'bg-gray-200 border-gray-300 opacity-80' // 終了した予定：薄グレー背景＆少し透過
+                        : 'bg-white border-gray-200 hover:border-blue-300' // 未開催の予定：白背景
+                    }`}
+                  >
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between">
                     <div>
                       {/* 日時表示領域：日付（曜日）と時間を2行で表示 */}
@@ -698,25 +767,87 @@ export default function DashboardPage() {
                     </button>
 
                     {openDetailId === evt.id && (
-                      <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 bg-gray-50 p-3 rounded">
-                        {evt.attendances.map((att) => (
-                          <div key={att.user_id} className="flex items-center justify-between text-xs sm:text-sm bg-white p-2 rounded shadow-sm min-w-0">
-                            <span className="font-medium truncate mr-1" title={att.user_name}>
-                              {att.user_name}
-                            </span>
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] sm:text-xs font-bold whitespace-nowrap ${
-                              att.status === '1' ? 'bg-green-100 text-green-700' :
-                              att.status === '2' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
-                            }`}>
-                              {att.status === '1' ? '参加' : att.status === '2' ? '不参加' : '保留'}
+                      <div className="mt-3 space-y-3 rounded-lg bg-gray-50 p-4">
+                        {/* 参加メンバー */}
+                        <div>
+                          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-green-700">
+                            <span>参加</span>
+                            <span className="text-gray-500">
+                              {evt.attendances.filter((a) => a.status === '1').length}名
                             </span>
                           </div>
-                        ))}
+                          <div className="flex flex-wrap gap-2">
+                            {evt.attendances
+                              .filter((a) => a.status === '1')
+                              .map((att) => (
+                                <span
+                                  key={att.user_id}
+                                  className="rounded-full bg-green-100 border border-green-200 px-3 py-1 text-xs font-medium text-green-800 shadow-sm"
+                                >
+                                  {att.user_name}
+                                </span>
+                              ))}
+                            {evt.attendances.filter((a) => a.status === '1').length === 0 && (
+                              <span className="text-xs text-gray-400">なし</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 不参加メンバー */}
+                        <div>
+                          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-red-700">
+                            <span>不参加</span>
+                            <span className="text-gray-500">
+                              {evt.attendances.filter((a) => a.status === '2').length}名
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {evt.attendances
+                              .filter((a) => a.status === '2')
+                              .map((att) => (
+                                <span
+                                  key={att.user_id}
+                                  className="rounded-full bg-red-100 border border-red-200 px-3 py-1 text-xs font-medium text-red-800 shadow-sm"
+                                >
+                                  {att.user_name}
+                                </span>
+                              ))}
+                            {evt.attendances.filter((a) => a.status === '2').length === 0 && (
+                              <span className="text-xs text-gray-400">なし</span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 未定・保留メンバー */}
+                        <div>
+                          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-yellow-700">
+                            <span>未定・保留</span>
+                            <span className="text-gray-500">
+                              {evt.attendances.filter((a) => a.status === '3' || !a.status).length}名
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {evt.attendances
+                              .filter((a) => a.status === '3' || !a.status)
+                              .map((att) => (
+                                <span
+                                  key={att.user_id}
+                                  className="rounded-full bg-yellow-100 border border-yellow-200 px-3 py-1 text-xs font-medium text-yellow-800 shadow-sm"
+                                >
+                                  {att.user_name}
+                                </span>
+                              ))}
+                            {evt.attendances.filter((a) => a.status === '3' || !a.status).length === 0 && (
+                              <span className="text-xs text-gray-400">なし</span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
