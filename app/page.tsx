@@ -21,6 +21,9 @@ interface User {
   id: string;
   name: string;
   role: string;
+  login_id?: string; // ログイン用ID
+  password?: string;   // パスワード
+  ronridelflg?: string;
 }
 
 interface AttendanceDetail {
@@ -45,9 +48,7 @@ interface EventItem {
   };
 }
 
-// 日付を比較して「今日以降」と「過去」に並び替える関数
 const sortEventsByDate = (eventsList: EventItem[]) => {
-  // 日本時間の今日（YYYY-MM-DD）を確実に取得
   const todayStr = new Intl.DateTimeFormat('ja-JP', {
     timeZone: 'Asia/Tokyo',
     year: 'numeric',
@@ -55,7 +56,7 @@ const sortEventsByDate = (eventsList: EventItem[]) => {
     day: '2-digit',
   })
     .format(new Date())
-    .replace(/\//g, '-'); // YYYY/MM/DD -> YYYY-MM-DD
+    .replace(/\//g, '-');
 
   const upcomingEvents = eventsList
     .filter((e) => e.event_date.slice(0, 10) >= todayStr)
@@ -70,12 +71,12 @@ const sortEventsByDate = (eventsList: EventItem[]) => {
 
 export default function DashboardPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [usersList, setUsersList] = useState<User[]>([]);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
   
-  // 管理者モーダル用の状態
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
   const [formData, setFormData] = useState({
@@ -84,6 +85,15 @@ export default function DashboardPage() {
     start_time: '19:00',
     end_time: '21:00',
     location: '',
+  });
+
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [userFormData, setUserFormData] = useState({
+    login_id: '',
+    password_hash: '',
+    name: '',
+    role: '1',
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -98,16 +108,18 @@ export default function DashboardPage() {
 
     const userObj: User = JSON.parse(savedUser);
     setCurrentUser(userObj);
-    fetchEventsAndAttendances(userObj.id);
+    fetchAppData(userObj.id);
   }, [router]);
 
-  const fetchEventsAndAttendances = async (currentUserId: string) => {
+  const fetchAppData = async (currentUserId: string) => {
     setIsLoading(true);
     try {
       const { data: usersData } = await supabase
         .from('users')
-        .select('id, name')
+        .select('*')
         .eq('ronridelflg', '0');
+
+      setUsersList(usersData || []);
 
       const { data: eventData } = await supabase
         .from('events')
@@ -131,16 +143,16 @@ export default function DashboardPage() {
 
         const details: AttendanceDetail[] = (usersData || []).map(
           (u: { id: string; name: string }) => {
-          const att = evtAttendances.find((a: any) => a.user_id === u.id);
-          const status = att ? att.status : '3';
+            const att = evtAttendances.find((a: any) => a.user_id === u.id);
+            const status = att ? att.status : '3';
 
-          if (u.id === currentUserId) myStatus = status;
+            if (u.id === currentUserId) myStatus = status;
 
-          if (status === '1') attendingCount++;
-          else if (status === '2') absentCount++;
-          else pendingCount++;
+            if (status === '1') attendingCount++;
+            else if (status === '2') absentCount++;
+            else pendingCount++;
 
-          return { user_id: u.id, user_name: u.name, status };
+            return { user_id: u.id, user_name: u.name, status };
           }
         );
 
@@ -157,9 +169,7 @@ export default function DashboardPage() {
         };
       });
 
-      // データのソートとセット
       setEvents(sortEventsByDate(mergedEvents));
-
     } catch (err: any) {
       console.error('データ取得エラー:', err.message || err);
     } finally {
@@ -167,13 +177,9 @@ export default function DashboardPage() {
     }
   };
 
-  // 出欠回答処理の修正
-// 出欠回答処理の修正
-// 出欠回答処理の修正
   const handleAttendanceChange = async (eventId: string, status: string) => {
     if (!currentUser) return;
 
-    // 1. Supabaseのデータ更新（user_name を除外し、onConflict を指定）
     const { error } = await supabase.from('attendances').upsert(
       {
         event_id: eventId,
@@ -184,12 +190,10 @@ export default function DashboardPage() {
     );
 
     if (error) {
-      console.error('更新エラー:', error.message);
       alert('更新に失敗しました: ' + error.message);
       return;
     }
 
-    // 2. 画面のステートを更新（並び順を維持）
     setEvents((prevEvents) => {
       const updatedEvents = prevEvents.map((evt) => {
         if (evt.id === eventId) {
@@ -225,28 +229,32 @@ export default function DashboardPage() {
         return evt;
       });
 
-      // 更新後もソート順を維持する
       return sortEventsByDate(updatedEvents);
     });
   };
 
-  // 時間フォーマット正規化関数 (ExcelのUTC読み込みによるズレを補正)
   const formatTimeValue = (val: any, defaultTime: string) => {
-    if (!val) return defaultTime;
+    if (val === undefined || val === null || val === '') return defaultTime;
+
+    if (typeof val === 'number') {
+      const totalMinutes = Math.round(val * 24 * 60);
+      const hours = Math.floor(totalMinutes / 60) % 24;
+      const minutes = totalMinutes % 60;
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    }
 
     if (val instanceof Date) {
-      const hours = String(val.getUTCHours()).padStart(2, '0');
-      const minutes = String(val.getUTCMinutes()).padStart(2, '0');
+      const hours = String(val.getHours()).padStart(2, '0');
+      const minutes = String(val.getMinutes()).padStart(2, '0');
       return `${hours}:${minutes}`;
     }
 
     const str = String(val).trim();
-
     if (str.includes('GMT') || str.includes('1899') || str.includes('T')) {
       const d = new Date(str);
       if (!isNaN(d.getTime())) {
-        const hours = String(d.getUTCHours()).padStart(2, '0');
-        const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
         return `${hours}:${minutes}`;
       }
     }
@@ -259,7 +267,6 @@ export default function DashboardPage() {
     return defaultTime;
   };
 
-  // --- CSV/Excel ファイル一括取り込み処理（管理者のみ許可） ---
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentUser || currentUser.role !== '0') {
       alert('一括取り込みは管理者のみ実行できます。');
@@ -313,7 +320,7 @@ export default function DashboardPage() {
           alert(`一括登録エラー: ${error.message}`);
         } else {
           alert(`${newEvents.length}件のイベントを一括登録しました！`);
-          fetchEventsAndAttendances(currentUser.id);
+          fetchAppData(currentUser.id);
         }
       } catch (err: any) {
         alert('ファイルの読み込みに失敗しました。形式を確認してください。');
@@ -326,7 +333,6 @@ export default function DashboardPage() {
     reader.readAsBinaryString(file);
   };
 
-  // 管理者機能: イベント作成・編集・削除
   const handleOpenCreateModal = () => {
     setEditingEvent(null);
     setFormData({
@@ -386,7 +392,7 @@ export default function DashboardPage() {
       }
 
       setIsModalOpen(false);
-      fetchEventsAndAttendances(currentUser.id);
+      fetchAppData(currentUser.id);
     } catch (err: any) {
       console.error('イベント保存エラー:', err);
     }
@@ -405,7 +411,97 @@ export default function DashboardPage() {
       if (error) {
         alert(`削除失敗: ${error.message}`);
       } else {
-        fetchEventsAndAttendances(currentUser.id);
+        fetchAppData(currentUser.id);
+      }
+    } catch (err: any) {
+      console.error('削除エラー:', err);
+    }
+  };
+
+  // メンバー管理関連のハンドラー
+  const handleOpenCreateUserModal = () => {
+    setEditingUser(null);
+    setUserFormData({ login_id: '', password_hash: '', name: '', role: '1' });
+    setIsUserModalOpen(true);
+  };
+
+  const handleOpenEditUserModal = (user: User) => {
+    setEditingUser(user);
+    setUserFormData({
+      login_id: user.login_id || '',
+      password_hash: '', // 編集時はパスワードは空からスタート（変更したい場合のみ入力）
+      name: user.name,
+      role: user.role,
+    });
+    setIsUserModalOpen(true);
+  };
+
+  const handleSaveUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+
+    try {
+      if (editingUser) {
+        const updatePayload: any = {
+          name: userFormData.name,
+          role: userFormData.role,
+        };
+        if (userFormData.password_hash) {
+          updatePayload.password_hash = userFormData.password_hash;
+        }
+
+        const { error } = await supabase
+          .from('users')
+          .update(updatePayload)
+          .eq('id', editingUser.id);
+
+        if (error) {
+          alert(`メンバー更新失敗: ${error.message}`);
+        } else {
+          if (editingUser.id === currentUser.id) {
+            const updated = { ...currentUser, name: userFormData.name, role: userFormData.role };
+            localStorage.setItem('user', JSON.stringify(updated));
+            setCurrentUser(updated);
+          }
+        }
+      } else {
+        const { error } = await supabase
+          .from('users')
+          .insert({
+            id: crypto.randomUUID(),
+            login_id: userFormData.login_id,
+            password_hash: userFormData.password_hash,
+            name: userFormData.name,
+            role: userFormData.role,
+            ronridelflg: '0',
+          });
+
+        if (error) {
+          alert(`メンバー登録失敗: ${error.message}`);
+        }
+      }
+
+      setIsUserModalOpen(false);
+      fetchAppData(currentUser.id);
+    } catch (err: any) {
+      console.error('メンバー保存エラー:', err);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm('このメンバーを削除（論理削除）してもよろしいですか？')) return;
+    if (!currentUser) return;
+
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ ronridelflg: '1' })
+        .eq('id', userId);
+
+      if (error) {
+        alert(`メンバー削除失敗: ${error.message}`);
+      } else {
+        fetchAppData(currentUser.id);
       }
     } catch (err: any) {
       console.error('削除エラー:', err);
@@ -461,7 +557,6 @@ export default function DashboardPage() {
   const currentMonthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
   const currentMonthEvents = events.filter((e) => e.event_date.startsWith(currentMonthStr));
 
-  // --- Google カレンダー追加用処理 (Web Intent) ---
   const handleAddToGoogleCalendar = (evt: EventItem) => {
     const startTimeStr = formatTime(evt.start_time) || '19:00';
     const endTimeStr = formatTime(evt.end_time) || '21:00';
@@ -498,10 +593,8 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-800">
-      {/* 修正後のヘッダー */}
       <header className="bg-white shadow">
         <div className="mx-auto max-w-5xl px-4 py-3">
-          {/* 上段：タイトルとユーザー情報 */}
           <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-2">
             <h1 className="text-base sm:text-xl font-bold text-gray-800 whitespace-nowrap">
               フットサル出欠管理
@@ -511,7 +604,6 @@ export default function DashboardPage() {
             </span>
           </div>
 
-          {/* 下段：操作ボタン群 */}
           <div className="mt-2 flex items-center justify-end space-x-2 overflow-x-auto py-1 whitespace-nowrap text-xs sm:text-sm">
             {currentUser?.role === '0' && (
               <>
@@ -534,11 +626,17 @@ export default function DashboardPage() {
                   accept=".csv, .xlsx, .xls"
                   className="hidden"
                 />
+                <button
+                  onClick={handleOpenCreateUserModal}
+                  className="rounded bg-purple-600 px-2.5 py-1.5 font-medium text-white hover:bg-purple-700 transition shadow-sm whitespace-nowrap"
+                >
+                  メンバーの編集
+                </button>
               </>
             )}
 
             <button
-              onClick={() => currentUser && fetchEventsAndAttendances(currentUser.id)}
+              onClick={() => currentUser && fetchAppData(currentUser.id)}
               className="rounded bg-blue-50 border border-blue-200 px-2.5 py-1.5 text-blue-600 hover:bg-blue-100 transition flex items-center space-x-1 whitespace-nowrap"
               title="最新のスケジュールに更新"
             >
@@ -605,7 +703,6 @@ export default function DashboardPage() {
                       : 'bg-white'
                   }`}
                 >
-                  {/* 上段：日付数字と未入力アイコンを横並び（重なり防止） */}
                   <div className="flex items-center justify-between w-full">
                     <span className="text-xs">{date.getDate()}</span>
                     {hasUnanswered && (
@@ -615,7 +712,6 @@ export default function DashboardPage() {
                     )}
                   </div>
 
-                  {/* 下段：ステータスドット */}
                   {dayEvents.length > 0 && (
                     <div className="flex justify-center space-x-1 mb-1 w-full">
                       {dayEvents.map((e) => (
@@ -638,18 +734,17 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* イベント一覧 */}
+        {/* イベント一覧（当月分のみ表示） */}
         <div className="rounded-lg bg-white p-6 shadow">
-          <h2 className="mb-4 text-lg font-bold">イベント・出欠入力一覧</h2>
+          <h2 className="mb-4 text-lg font-bold">{year}年 {month + 1}月のイベント・出欠入力一覧</h2>
 
-          {events.length === 0 ? (
+          {currentMonthEvents.length === 0 ? (
             <div className="rounded border border-dashed border-gray-300 p-8 text-center text-gray-400">
-              予定されているイベントはありません。
+              この月の予定されているイベントはありません。
             </div>
           ) : (
-<div className="space-y-4">
-              {events.map((evt) => {
-                // 日本時間の今日（YYYY-MM-DD）を取得して過去イベントか判定
+            <div className="space-y-4">
+              {currentMonthEvents.map((evt) => {
                 const todayStr = new Intl.DateTimeFormat('ja-JP', {
                   timeZone: 'Asia/Tokyo',
                   year: 'numeric',
@@ -667,185 +762,180 @@ export default function DashboardPage() {
                     id={`event-${evt.event_date}`}
                     className={`rounded-lg border p-4 transition ${
                       isPast
-                        ? 'bg-gray-200 border-gray-300 opacity-80' // 終了した予定：薄グレー背景＆少し透過
-                        : 'bg-white border-gray-200 hover:border-blue-300' // 未開催の予定：白背景
+                        ? 'bg-gray-200 border-gray-300 opacity-80'
+                        : 'bg-white border-gray-200 hover:border-blue-300'
                     }`}
                   >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between">
-                    <div>
-                      {/* 日時表示領域：日付（曜日）と時間を2行で表示 */}
-                      <div className="mb-1">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm font-semibold text-blue-600">
-                            {evt.event_date}（{['日', '月', '火', '水', '木', '金', '土'][new Date(evt.event_date.replace(/-/g, '/')).getDay()]}）
-                          </span>
-                          {(evt.my_status === '3' || !evt.my_status) && (
-                            <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-bold text-red-600">
-                              未入力 !
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between">
+                      <div>
+                        <div className="mb-1">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm font-semibold text-blue-600">
+                              {evt.event_date}（{['日', '月', '火', '水', '木', '金', '土'][new Date(evt.event_date.replace(/-/g, '/')).getDay()]}）
                             </span>
+                            {(evt.my_status === '3' || !evt.my_status) && (
+                              <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-bold text-red-600">
+                                未入力 !
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-sm font-semibold text-blue-600">
+                            {formatTime(evt.start_time)} 〜 {formatTime(evt.end_time)}
+                          </div>
+                        </div>
+                        <div className="text-lg font-bold flex items-center space-x-2">
+                          <span>{evt.title}</span>
+
+                          {currentUser?.role === '0' && (
+                            <div className="flex items-center space-x-1 text-xs">
+                              <button
+                                onClick={() => handleOpenEditModal(evt)}
+                                className="px-2 py-0.5 text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
+                              >
+                                編集
+                              </button>
+                              <button
+                                onClick={() => handleDeleteEvent(evt.id)}
+                                className="px-2 py-0.5 text-red-600 bg-red-50 rounded hover:bg-red-100"
+                              >
+                                削除
+                              </button>
+                            </div>
                           )}
                         </div>
-                        <div className="text-sm font-semibold text-blue-600">
-                          {formatTime(evt.start_time)} 〜 {formatTime(evt.end_time)}
+                        <div className="text-sm text-gray-500">場所: {evt.location || '未定'}</div>
+
+                        <div className="mt-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAddToGoogleCalendar(evt)}
+                            className="inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition shadow-sm"
+                          >
+                            <span>📅</span>
+                            <span>Googleカレンダーに追加</span>
+                          </button>
+                        </div>
+
+                        <div className="mt-2 flex items-center space-x-3 text-xs">
+                          <span className="text-green-600 font-bold">参加: {evt.counts.attending}名</span>
+                          <span className="text-red-600 font-bold">不参加: {evt.counts.absent}名</span>
+                          <span className="text-yellow-600 font-bold">保留: {evt.counts.pending}名</span>
                         </div>
                       </div>
-                      <div className="text-lg font-bold flex items-center space-x-2">
-                        <span>{evt.title}</span>
 
-                        {currentUser?.role === '0' && (
-                          <div className="flex items-center space-x-1 text-xs">
-                            <button
-                              onClick={() => handleOpenEditModal(evt)}
-                              className="px-2 py-0.5 text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
-                            >
-                              編集
-                            </button>
-                            <button
-                              onClick={() => handleDeleteEvent(evt.id)}
-                              className="px-2 py-0.5 text-red-600 bg-red-50 rounded hover:bg-red-100"
-                            >
-                              削除
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-500">場所: {evt.location || '未定'}</div>
-
-                      {/* Googleカレンダー追加ボタン */}
-                      <div className="mt-2">
+                      <div className="mt-4 sm:mt-0 flex space-x-2">
                         <button
-                          type="button"
-                          onClick={() => handleAddToGoogleCalendar(evt)}
-                          className="inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition shadow-sm"
+                          onClick={() => handleAttendanceChange(evt.id, '1')}
+                          className={`px-4 py-2 rounded text-sm font-medium transition ${
+                            evt.my_status === '1' ? 'bg-green-600 text-white shadow' : 'bg-gray-100 hover:bg-green-100'
+                          }`}
                         >
-                          <span>📅</span>
-                          <span>Googleカレンダーに追加</span>
+                          参加
+                        </button>
+                        <button
+                          onClick={() => handleAttendanceChange(evt.id, '2')}
+                          className={`px-4 py-2 rounded text-sm font-medium transition ${
+                            evt.my_status === '2' ? 'bg-red-600 text-white shadow' : 'bg-gray-100 hover:bg-red-100'
+                          }`}
+                        >
+                          不参加
+                        </button>
+                        <button
+                          onClick={() => handleAttendanceChange(evt.id, '3')}
+                          className={`px-4 py-2 rounded text-sm font-medium transition ${
+                            evt.my_status === '3' ? 'bg-yellow-500 text-white shadow' : 'bg-gray-100 hover:bg-yellow-100'
+                          }`}
+                        >
+                          保留
                         </button>
                       </div>
-
-                      <div className="mt-2 flex items-center space-x-3 text-xs">
-                        <span className="text-green-600 font-bold">参加: {evt.counts.attending}名</span>
-                        <span className="text-red-600 font-bold">不参加: {evt.counts.absent}名</span>
-                        <span className="text-yellow-600 font-bold">保留: {evt.counts.pending}名</span>
-                      </div>
                     </div>
 
-                    <div className="mt-4 sm:mt-0 flex space-x-2">
+                    <div className="mt-4 border-t border-gray-100 pt-3">
                       <button
-                        onClick={() => handleAttendanceChange(evt.id, '1')}
-                        className={`px-4 py-2 rounded text-sm font-medium transition ${
-                          evt.my_status === '1' ? 'bg-green-600 text-white shadow' : 'bg-gray-100 hover:bg-green-100'
-                        }`}
+                        onClick={() => setOpenDetailId(openDetailId === evt.id ? null : evt.id)}
+                        className="text-xs text-blue-600 hover:underline focus:outline-none"
                       >
-                        参加
+                        {openDetailId === evt.id ? '▲ メンバーの回答状況を閉じる' : '▼ メンバーの回答状況を見る'}
                       </button>
-                      <button
-                        onClick={() => handleAttendanceChange(evt.id, '2')}
-                        className={`px-4 py-2 rounded text-sm font-medium transition ${
-                          evt.my_status === '2' ? 'bg-red-600 text-white shadow' : 'bg-gray-100 hover:bg-red-100'
-                        }`}
-                      >
-                        不参加
-                      </button>
-                      <button
-                        onClick={() => handleAttendanceChange(evt.id, '3')}
-                        className={`px-4 py-2 rounded text-sm font-medium transition ${
-                          evt.my_status === '3' ? 'bg-yellow-500 text-white shadow' : 'bg-gray-100 hover:bg-yellow-100'
-                        }`}
-                      >
-                        保留
-                      </button>
+
+                      {openDetailId === evt.id && (
+                        <div className="mt-3 space-y-3 rounded-lg bg-gray-50 p-4">
+                          <div>
+                            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-green-700">
+                              <span>参加</span>
+                              <span className="text-gray-500">
+                                {evt.attendances.filter((a) => a.status === '1').length}名
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {evt.attendances
+                                .filter((a) => a.status === '1')
+                                .map((att) => (
+                                  <span
+                                    key={att.user_id}
+                                    className="rounded-full bg-green-100 border border-green-200 px-3 py-1 text-xs font-medium text-green-800 shadow-sm"
+                                  >
+                                    {att.user_name}
+                                  </span>
+                                ))}
+                              {evt.attendances.filter((a) => a.status === '1').length === 0 && (
+                                <span className="text-xs text-gray-400">なし</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-red-700">
+                              <span>不参加</span>
+                              <span className="text-gray-500">
+                                {evt.attendances.filter((a) => a.status === '2').length}名
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {evt.attendances
+                                .filter((a) => a.status === '2')
+                                .map((att) => (
+                                  <span
+                                    key={att.user_id}
+                                    className="rounded-full bg-red-100 border border-red-200 px-3 py-1 text-xs font-medium text-red-800 shadow-sm"
+                                  >
+                                    {att.user_name}
+                                  </span>
+                                ))}
+                              {evt.attendances.filter((a) => a.status === '2').length === 0 && (
+                                <span className="text-xs text-gray-400">なし</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-yellow-700">
+                              <span>未定・保留</span>
+                              <span className="text-gray-500">
+                                {evt.attendances.filter((a) => a.status === '3' || !a.status).length}名
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {evt.attendances
+                                .filter((a) => a.status === '3' || !a.status)
+                                .map((att) => (
+                                  <span
+                                    key={att.user_id}
+                                    className="rounded-full bg-yellow-100 border border-yellow-200 px-3 py-1 text-xs font-medium text-yellow-800 shadow-sm"
+                                  >
+                                    {att.user_name}
+                                  </span>
+                                ))}
+                              {evt.attendances.filter((a) => a.status === '3' || !a.status).length === 0 && (
+                                <span className="text-xs text-gray-400">なし</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
-
-                  <div className="mt-4 border-t border-gray-100 pt-3">
-                    <button
-                      onClick={() => setOpenDetailId(openDetailId === evt.id ? null : evt.id)}
-                      className="text-xs text-blue-600 hover:underline focus:outline-none"
-                    >
-                      {openDetailId === evt.id ? '▲ メンバーの回答状況を閉じる' : '▼ メンバーの回答状況を見る'}
-                    </button>
-
-                    {openDetailId === evt.id && (
-                      <div className="mt-3 space-y-3 rounded-lg bg-gray-50 p-4">
-                        {/* 参加メンバー */}
-                        <div>
-                          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-green-700">
-                            <span>参加</span>
-                            <span className="text-gray-500">
-                              {evt.attendances.filter((a) => a.status === '1').length}名
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {evt.attendances
-                              .filter((a) => a.status === '1')
-                              .map((att) => (
-                                <span
-                                  key={att.user_id}
-                                  className="rounded-full bg-green-100 border border-green-200 px-3 py-1 text-xs font-medium text-green-800 shadow-sm"
-                                >
-                                  {att.user_name}
-                                </span>
-                              ))}
-                            {evt.attendances.filter((a) => a.status === '1').length === 0 && (
-                              <span className="text-xs text-gray-400">なし</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 不参加メンバー */}
-                        <div>
-                          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-red-700">
-                            <span>不参加</span>
-                            <span className="text-gray-500">
-                              {evt.attendances.filter((a) => a.status === '2').length}名
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {evt.attendances
-                              .filter((a) => a.status === '2')
-                              .map((att) => (
-                                <span
-                                  key={att.user_id}
-                                  className="rounded-full bg-red-100 border border-red-200 px-3 py-1 text-xs font-medium text-red-800 shadow-sm"
-                                >
-                                  {att.user_name}
-                                </span>
-                              ))}
-                            {evt.attendances.filter((a) => a.status === '2').length === 0 && (
-                              <span className="text-xs text-gray-400">なし</span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 未定・保留メンバー */}
-                        <div>
-                          <div className="mb-2 flex items-center gap-1.5 text-xs font-bold text-yellow-700">
-                            <span>未定・保留</span>
-                            <span className="text-gray-500">
-                              {evt.attendances.filter((a) => a.status === '3' || !a.status).length}名
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {evt.attendances
-                              .filter((a) => a.status === '3' || !a.status)
-                              .map((att) => (
-                                <span
-                                  key={att.user_id}
-                                  className="rounded-full bg-yellow-100 border border-yellow-200 px-3 py-1 text-xs font-medium text-yellow-800 shadow-sm"
-                                >
-                                  {att.user_name}
-                                </span>
-                              ))}
-                            {evt.attendances.filter((a) => a.status === '3' || !a.status).length === 0 && (
-                              <span className="text-xs text-gray-400">なし</span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
                 );
               })}
             </div>
@@ -853,7 +943,7 @@ export default function DashboardPage() {
         </div>
       </main>
 
-      {/* モーダル */}
+      {/* イベント編集・作成用モーダル */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
@@ -934,6 +1024,155 @@ export default function DashboardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* メンバー編集・新規登録用モーダル */}
+      {isUserModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-lg bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-gray-800">メンバー管理・編集</h3>
+              <button
+                onClick={handleOpenCreateUserModal}
+                className="rounded bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 shadow-sm"
+              >
+                ＋ 新規メンバー登録
+              </button>
+            </div>
+
+            {/* 新規登録 / 編集フォーム */}
+            <form onSubmit={handleSaveUser} className="mb-6 rounded-lg bg-gray-50 p-4 border border-gray-200 space-y-3">
+              <h4 className="text-sm font-bold text-gray-700">
+                {editingUser ? `「${editingUser.name}」の情報を編集` : '新規メンバーの追加'}
+              </h4>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">名前</label>
+                <input
+                  type="text"
+                  required
+                  value={userFormData.name}
+                  onChange={(e) => setUserFormData({ ...userFormData, name: e.target.value })}
+                  placeholder="例: 山田 太郎"
+                  className="w-full rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">ID（ログイン用ID）</label>
+                <input
+                  type="text"
+                  required
+                  disabled={!!editingUser}
+                  value={userFormData.login_id}
+                  onChange={(e) => setUserFormData({ ...userFormData, login_id: e.target.value })}
+                  placeholder="例: user01"
+                  className={`w-full rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none ${
+                    editingUser ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-white'
+                  }`}
+                />
+              </div>
+              
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  {editingUser ? '新しいパスワード（変更する場合のみ入力）' : 'パスワード'}
+                </label>
+                <input
+                  type="text"
+                  required={!editingUser}
+                  value={userFormData.password_hash}
+                  onChange={(e) => setUserFormData({ ...userFormData, password_hash: e.target.value })}
+                  placeholder={editingUser ? '変更しない場合は空欄' : 'パスワードを入力'}
+                  className="w-full rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none bg-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">権限 (role)</label>
+                <select
+                  value={userFormData.role}
+                  onChange={(e) => setUserFormData({ ...userFormData, role: e.target.value })}
+                  className="w-full rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none bg-white"
+                >
+                  <option value="0">0: 管理者</option>
+                  <option value="1">1: メンバー</option>
+                  <option value="2">2: 練習生</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-2">
+                {editingUser && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingUser(null);
+                      setUserFormData({ login_id: '', password_hash: '', name: '', role: '1' });
+                    }}
+                    className="rounded bg-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-300"
+                  >
+                    新規登録モードに切り替え
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="rounded bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-700 shadow"
+                >
+                  {editingUser ? '変更を保存' : '追加する'}
+                </button>
+              </div>
+            </form>
+            
+
+            {/* 登録済みメンバー一覧 */}
+            <div>
+              <h4 className="text-sm font-bold text-gray-700 mb-2">登録メンバー一覧</h4>
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {usersList.map((u) => (
+                  <div
+                    key={u.id}
+                    className="flex items-center justify-between rounded border border-gray-200 p-3 bg-white shadow-sm"
+                  >
+                    <div>
+                      <div className="text-sm font-bold text-gray-800 flex items-center space-x-2">
+                        <span>{u.name}</span>
+                        <span className={`px-2 py-0.5 text-[10px] rounded font-bold ${
+                          u.role === '0' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {getRoleLabel(u.role)}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500">ID: {u.login_id || '未設定'}</div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => handleOpenEditUserModal(u)}
+                        className="rounded bg-gray-100 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-200"
+                      >
+                        編集
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(u.id)}
+                        className="rounded bg-red-50 px-2.5 py-1 text-xs text-red-600 hover:bg-red-100"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsUserModalOpen(false)}
+                className="rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+              >
+                閉じる
+              </button>
+            </div>
           </div>
         </div>
       )}
