@@ -599,9 +599,20 @@ export default function DashboardPage() {
             <h1 className="text-base sm:text-xl font-bold text-gray-800 whitespace-nowrap">
               フットサル出欠管理
             </h1>
-            <span className="text-xs sm:text-sm text-gray-600 truncate max-w-[160px] sm:max-w-none text-right">
-              {currentUser?.name} <span className="text-gray-400">({getRoleLabel(currentUser?.role)})</span>
-            </span>
+            <div className="flex items-center space-x-2 text-xs sm:text-sm">
+              <span className="text-gray-600 truncate max-w-[120px] sm:max-w-none text-right">
+                {currentUser?.name} <span className="text-gray-400">({getRoleLabel(currentUser?.role)})</span>
+              </span>
+              <button
+                onClick={() => {
+                  localStorage.removeItem('user');
+                  router.push('/login');
+                }}
+                className="rounded bg-gray-200 px-2 py-1 text-gray-700 hover:bg-gray-300 transition whitespace-nowrap text-xs"
+              >
+                ログアウト
+              </button>
+            </div>
           </div>
 
           <div className="mt-2 flex items-center justify-end space-x-2 overflow-x-auto py-1 whitespace-nowrap text-xs sm:text-sm">
@@ -642,15 +653,6 @@ export default function DashboardPage() {
             >
               <span>🔄</span>
               <span>更新</span>
-            </button>
-            <button
-              onClick={() => {
-                localStorage.removeItem('user');
-                router.push('/login');
-              }}
-              className="rounded bg-gray-200 px-2.5 py-1.5 text-gray-700 hover:bg-gray-300 transition whitespace-nowrap"
-            >
-              ログアウト
             </button>
           </div>
         </div>
