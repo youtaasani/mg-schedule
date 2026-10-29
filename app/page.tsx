@@ -30,6 +30,7 @@ interface AttendanceDetail {
   user_id: string;
   user_name: string;
   status: string;
+  comment: string;
 }
 
 interface EventItem {
@@ -75,6 +76,8 @@ export default function DashboardPage() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [savingCommentEventId, setSavingCommentEventId] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
   
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -152,7 +155,12 @@ export default function DashboardPage() {
             else if (status === '2') absentCount++;
             else pendingCount++;
 
-            return { user_id: u.id, user_name: u.name, status };
+            return {
+              user_id: u.id,
+              user_name: u.name,
+              status,
+              comment: att?.comment ?? '',
+            };
           }
         );
 
@@ -170,6 +178,14 @@ export default function DashboardPage() {
       });
 
       setEvents(sortEventsByDate(mergedEvents));
+      setCommentDrafts(
+        Object.fromEntries(
+          mergedEvents.map((evt) => [
+            evt.id,
+            evt.attendances.find((attendance) => attendance.user_id === currentUserId)?.comment ?? '',
+          ])
+        )
+      );
     } catch (err: any) {
       console.error('データ取得エラー:', err.message || err);
     } finally {
@@ -206,6 +222,7 @@ export default function DashboardPage() {
               user_id: currentUser.id,
               user_name: currentUser.name,
               status: status,
+              comment: evt.attendances.find((a) => a.user_id === currentUser.id)?.comment ?? '',
             },
           ];
 
@@ -231,6 +248,49 @@ export default function DashboardPage() {
 
       return sortEventsByDate(updatedEvents);
     });
+  };
+
+  const handleCommentSave = async (event: EventItem) => {
+    if (!currentUser) return;
+
+    setSavingCommentEventId(event.id);
+    try {
+      const comment = commentDrafts[event.id] ?? '';
+      const { error } = await supabase.from('attendances').upsert(
+        {
+          event_id: event.id,
+          user_id: currentUser.id,
+          status: event.my_status ?? '3',
+          comment,
+        },
+        { onConflict: 'event_id, user_id' }
+      );
+
+      if (error) {
+        alert('コメントの更新に失敗しました: ' + error.message);
+        return;
+      }
+
+      setEvents((prevEvents) =>
+        prevEvents.map((evt) =>
+          evt.id === event.id
+            ? {
+                ...evt,
+                attendances: evt.attendances.map((attendance) =>
+                  attendance.user_id === currentUser.id
+                    ? { ...attendance, comment }
+                    : attendance
+                ),
+              }
+            : evt
+        )
+      );
+    } catch (err) {
+      console.error('コメント更新エラー:', err);
+      alert('コメントの更新に失敗しました。通信状態を確認してください。');
+    } finally {
+      setSavingCommentEventId(null);
+    }
   };
 
   const formatTimeValue = (val: any, defaultTime: string) => {
@@ -825,30 +885,57 @@ export default function DashboardPage() {
                         </div>
                       </div>
 
-                      <div className="mt-4 sm:mt-0 flex space-x-2">
+                      <div className="mt-4 sm:mt-0 sm:ml-4 flex flex-col gap-2 sm:min-w-[280px]">
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={() => handleAttendanceChange(evt.id, '1')}
+                            className={`px-4 py-2 rounded text-sm font-medium transition ${
+                              evt.my_status === '1' ? 'bg-green-600 text-white shadow' : 'bg-gray-100 hover:bg-green-100'
+                            }`}
+                          >
+                            参加
+                          </button>
+                          <button
+                            onClick={() => handleAttendanceChange(evt.id, '2')}
+                            className={`px-4 py-2 rounded text-sm font-medium transition ${
+                              evt.my_status === '2' ? 'bg-red-600 text-white shadow' : 'bg-gray-100 hover:bg-red-100'
+                            }`}
+                          >
+                            不参加
+                          </button>
+                          <button
+                            onClick={() => handleAttendanceChange(evt.id, '3')}
+                            className={`px-4 py-2 rounded text-sm font-medium transition ${
+                              evt.my_status === '3' ? 'bg-yellow-500 text-white shadow' : 'bg-gray-100 hover:bg-yellow-100'
+                            }`}
+                          >
+                            保留
+                          </button>
+                        </div>
+                        <label className="text-xs font-semibold text-gray-600" htmlFor={`comment-${evt.id}`}>
+                          コメント
+                        </label>
+                        <textarea
+                          id={`comment-${evt.id}`}
+                          value={commentDrafts[evt.id] ?? ''}
+                          maxLength={100}
+                          onChange={(e) =>
+                            setCommentDrafts((drafts) => ({ ...drafts, [evt.id]: e.target.value }))
+                          }
+                          rows={2}
+                          placeholder="イベントについてのコメント"
+                          className="w-full resize-y rounded border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none"
+                        />
+                        <span className="self-end text-xs text-gray-500">
+                          {(commentDrafts[evt.id] ?? '').length}/100文字
+                        </span>
                         <button
-                          onClick={() => handleAttendanceChange(evt.id, '1')}
-                          className={`px-4 py-2 rounded text-sm font-medium transition ${
-                            evt.my_status === '1' ? 'bg-green-600 text-white shadow' : 'bg-gray-100 hover:bg-green-100'
-                          }`}
+                          type="button"
+                          onClick={() => handleCommentSave(evt)}
+                          disabled={savingCommentEventId === evt.id}
+                          className="self-end rounded bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                         >
-                          参加
-                        </button>
-                        <button
-                          onClick={() => handleAttendanceChange(evt.id, '2')}
-                          className={`px-4 py-2 rounded text-sm font-medium transition ${
-                            evt.my_status === '2' ? 'bg-red-600 text-white shadow' : 'bg-gray-100 hover:bg-red-100'
-                          }`}
-                        >
-                          不参加
-                        </button>
-                        <button
-                          onClick={() => handleAttendanceChange(evt.id, '3')}
-                          className={`px-4 py-2 rounded text-sm font-medium transition ${
-                            evt.my_status === '3' ? 'bg-yellow-500 text-white shadow' : 'bg-gray-100 hover:bg-yellow-100'
-                          }`}
-                        >
-                          保留
+                          {savingCommentEventId === evt.id ? '更新中...' : 'コメントを更新'}
                         </button>
                       </div>
                     </div>
@@ -931,6 +1018,27 @@ export default function DashboardPage() {
                                 ))}
                               {evt.attendances.filter((a) => a.status === '3' || !a.status).length === 0 && (
                                 <span className="text-xs text-gray-400">なし</span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div>
+                            <div className="mb-2 text-xs font-bold text-gray-700">コメント</div>
+                            <div className="space-y-2">
+                              {evt.attendances
+                                .filter((attendance) => attendance.comment.trim())
+                                .map((attendance) => (
+                                  <div key={attendance.user_id} className="rounded border border-gray-200 bg-white p-2">
+                                    <div className="mb-1 text-xs font-semibold text-gray-600">
+                                      {attendance.user_name}
+                                    </div>
+                                    <p className="whitespace-pre-wrap break-words text-sm text-gray-800">
+                                      {attendance.comment}
+                                    </p>
+                                  </div>
+                                ))}
+                              {!evt.attendances.some((attendance) => attendance.comment.trim()) && (
+                                <span className="text-xs text-gray-400">コメントはありません。</span>
                               )}
                             </div>
                           </div>
